@@ -9,7 +9,7 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Crear un pool de conexiones
+// Crear un pool de conexiones para despliegue
 const pool = mysql.createPool({
     host: process.env.MYSQL_ADDON_HOST,
     user: process.env.MYSQL_ADDON_USER,
@@ -24,6 +24,22 @@ const pool = mysql.createPool({
     }
 });
 
+/*
+// Crear un pool de conexiones para produccion
+const pool = mysql.createPool({
+    host: process.env.DB_HOST,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+    port: process.env.MYSQL_ADDON_PORT,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0,
+    ssl: {
+        rejectUnauthorized: false
+    }
+});
+*/
 // Función para manejar errores de conexión
 pool.on('error', (err) => {
     console.error('Error en la conexión con la base de datos:', err);
@@ -207,19 +223,14 @@ app.post('/rutina_ejercicios', async (req, res) => {
 app.get('/rutina_ejercicios/:rutina_id', async (req, res) => {
     const { rutina_id } = req.params;
 
-    try {
-        const [results] = await db.promise().query(
-            `SELECT e.* FROM ejercicios e
-             INNER JOIN rutina_ejercicios re ON e.id = re.ejercicio_id
-             WHERE re.rutina_id = ?`, 
-            [rutina_id]
-        );
-
-        res.json(results); // Devuelve los ejercicios de la rutina
-    } catch (error) {
-        console.error("Error al obtener los ejercicios de la rutina:", error);
-        res.status(500).json({ message: "Error al obtener los ejercicios de la rutina" });
-    }
+    pool.query(
+        'SELECT e.* FROM ejercicios e INNER JOIN rutina_ejercicios re ON e.id = re.ejercicio_id WHERE re.rutina_id = ?', 
+        [rutina_id], 
+        (err, results) => {
+            if (err) return res.status(500).json(err);
+            res.json(results); // Devuelve los ejercicios de la rutina
+        }
+    );
 });
 
 app.get('/rutinas/:id', async (req, res) => {
@@ -232,16 +243,12 @@ app.get('/rutinas/:id', async (req, res) => {
         const decoded = jwt.verify(token, 'secreto');
         const usuario_id = decoded.id;
 
-        const [results] = await db.promise().query(
-            'SELECT * FROM rutinas WHERE id = ? AND usuario_id = ?', 
-            [id, usuario_id]
-        );
+        pool.query('SELECT * FROM rutinas WHERE id = ? AND usuario_id = ?', [id, usuario_id], (err, results) => {
+            if (err) return res.status(500).json({ message: 'Error al obtener la rutina' });
+            if (results.length === 0) return res.status(404).json({ message: 'Rutina no encontrada' });
+            res.json(results[0]); // Devuelve la rutina con ese ID
+        });
 
-        if (results.length === 0) {
-            return res.status(404).json({ message: "Rutina no encontrada" });
-        }
-
-        res.json(results[0]); // Devuelve la rutina con ese ID
     } catch (error) {
         console.error("Error al obtener la rutina:", error);
         res.status(500).json({ message: "Error al obtener la rutina" });
@@ -255,5 +262,5 @@ setInterval(() => {
   }, 5 * 60 * 1000); // Cada 5 minutos
 
 // Iniciar el servidor
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000;  
 app.listen(PORT, () => console.log(`Backend corriendo en el puerto ${PORT}`));
